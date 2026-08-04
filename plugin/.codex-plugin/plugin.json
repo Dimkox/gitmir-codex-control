@@ -1,0 +1,9 @@
+{
+  "name": "gitmir",
+  "version": "1.0.0",
+  "description": "Living product model + verified task queue for Codex. Builds .gitmir/model/ from real code, plans tasks from blast radius, runs acceptance checks for real — a task is only done when checks pass.",
+  "author": "gitmir (adapted for Codex)",
+  "homepage": "https://gitmir.com",
+  "license": "AGPL-3.0-or-later",
+  "skills": "./skills/"
+}

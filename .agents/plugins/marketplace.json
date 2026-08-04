@@ -1,0 +1,20 @@
+{
+  "name": "gitmir-codex",
+  "plugins": [
+    {
+      "name": "gitmir",
+      "source": {
+        "source": "local",
+        "path": "./plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity",
+      "interface": {
+        "displayName": "GitMir — model + verified queue"
+      }
+    }
+  ]
+}
