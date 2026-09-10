@@ -60,6 +60,10 @@ Opens **http://localhost:4599** → add a project folder → **▶ Run Codex**.
 Windows shortcuts: `start.cmd` / `install-shortcut.cmd`.  
 macOS: `start.command` / `install-shortcut.command`.
 
+### Windows maintenance recipes
+
+[Google Cloud SDK: update to 584.0.0 and repair WinGet `Unknown`](docs/windows/gcloud-winget-version-repair/README.md) — PowerShell script, one-line command, troubleshooting, registry rollback guidance, and validation criteria. The guide is in Russian and records the Windows end-to-end validation status. This is an optional manual procedure, not a GitMir dependency or startup action.
+
 ---
 
 ## Skills
