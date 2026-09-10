@@ -60,9 +60,28 @@ Opens **http://localhost:4599** → add a project folder → **▶ Run Codex**.
 Windows shortcuts: `start.cmd` / `install-shortcut.cmd`.  
 macOS: `start.command` / `install-shortcut.command`.
 
+### Optional Google Cloud environment checks
+
+`$gcloud-doctor` adds local Google Cloud diagnostics on **Windows, macOS and Linux**.
+It checks the actual SDK version, PATH ambiguity, Python, project configuration,
+and separate CLI/ADC evidence. It does not make Google Cloud a GitMir dependency
+and does not run at startup. No login, update, registry edit, deployment or billing
+operation is performed by the diagnostic CLI.
+
+```text
+npm run doctor:gcloud
+npm run doctor:gcloud -- --json
+npm run test:gcloud-doctor
+```
+
+[Full guide, platform-specific maintenance and verification limits](plugin/skills/gcloud-doctor/references/maintenance.md).
+The skill and all runtime assets are inside `plugin/skills/gcloud-doctor`, so they
+also work with the standalone installed plugin. Tests use a fake SDK; a passing
+local report is not proof of cloud API access, IAM permissions or valid tokens.
+
 ### Windows maintenance recipes
 
-[Google Cloud SDK: update to 584.0.0 and repair WinGet `Unknown`](docs/windows/gcloud-winget-version-repair/README.md) — PowerShell script, one-line command, troubleshooting, registry rollback guidance, and validation criteria. The guide is in Russian and records the Windows end-to-end validation status. This is an optional manual procedure, not a GitMir dependency or startup action.
+[Google Cloud SDK: update to 584.0.0 and repair WinGet `Unknown`](docs/windows/gcloud-winget-version-repair/README.md) — PowerShell script, one-line command, troubleshooting, registry rollback guidance, and validation criteria. The guide is in Russian and records the Windows end-to-end validation status. This is an optional manual procedure, not a GitMir dependency or startup action. It is a historical fixed-version case, not the cross-platform doctor's update policy.
 
 ---
 
@@ -81,6 +100,7 @@ macOS: `start.command` / `install-shortcut.command`.
 | `$context-distillation` | Messy input → `.gitmir/brief.json` |
 | `$legacy-maintenance` | Safe changes on coupled systems |
 | `$stack-port` | Port old stack → new without losing behaviour |
+| `$gcloud-doctor` | Optional Windows/macOS/Linux Google Cloud environment diagnostics; explicitly authorized maintenance only |
 
 Flat copies under `skills/` are for the dashboard UI (copy-paste). Canonical Codex layout is `plugin/skills/<name>/SKILL.md`.
 
