@@ -252,3 +252,14 @@ test('Windows process creation works with a real CMD fixture', { skip: process.p
   assert.equal(p.status, 0, p.stderr);
   assert.equal(JSON.parse(p.stdout).checks.find(c => c.id === 'SDK_VERSION').status, 'pass');
 });
+
+test('skill executes through the symlink or junction used by GitMir installers', t => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'gitmir linked skill '));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = fileURLToPath(new URL('../plugin/skills/gcloud-doctor', import.meta.url));
+  const linked = path.join(root, 'gcloud-doctor');
+  symlinkSync(source, linked, process.platform === 'win32' ? 'junction' : 'dir');
+  const p = spawnSync(process.execPath, [path.join(linked, 'scripts', 'doctor.mjs'), '--help'], { cwd: root, encoding: 'utf8' });
+  assert.equal(p.status, 0, p.stderr);
+  assert.match(p.stdout, /GitMir gcloud-doctor/);
+});

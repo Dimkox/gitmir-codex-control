@@ -13,7 +13,7 @@ Usage: node doctor.mjs [--json] [--project PROJECT_ID] [--min-version X.Y.Z]
                       [--timeout-ms 10000] [--help]
 Exit: 0 = no failures; 1 = diagnostic failures (or warnings with --strict);
       2 = invalid arguments/internal error. Warnings do not certify cloud access.
-No login, update, registry edits, credential reads or cloud resource changes.
+No login, update, registry edits, credential export or cloud resource changes.
 Repairs require explicit approval; read references/maintenance.md in this skill.
 `;
 
@@ -220,4 +220,11 @@ export function main(argv = process.argv.slice(2)) {
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = main();
+function isEntryPoint() {
+  if (!process.argv[1]) return false;
+  // GitMir installers use symlinks/junctions; ESM resolves the real module path.
+  try { return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)); }
+  catch { return false; }
+}
+
+if (isEntryPoint()) process.exitCode = main();
