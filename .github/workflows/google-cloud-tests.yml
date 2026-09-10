@@ -7,6 +7,7 @@ on:
       - 'skills.json'
       - 'package.json'
       - 'tests/google-cloud.test.mjs'
+      - 'tools/audit/**'
       - '.github/workflows/google-cloud-tests.yml'
   pull_request:
     paths:
@@ -15,6 +16,7 @@ on:
       - 'skills.json'
       - 'package.json'
       - 'tests/google-cloud.test.mjs'
+      - 'tools/audit/**'
       - '.github/workflows/google-cloud-tests.yml'
 permissions:
   contents: read
@@ -36,3 +38,49 @@ jobs:
           node --check plugin/skills/google-cloud/scripts/gcloud.mjs
           node --check plugin/skills/google-cloud/scripts/doctor.mjs
           npm run test:gcloud
+  full-project-audit:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/audit/')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: Check out audit driver
+        uses: actions/checkout@v4
+        with:
+          path: audit-driver
+          persist-credentials: false
+      - name: Check out exact unchanged GitMir baseline
+        uses: actions/checkout@v4
+        with:
+          repository: Dimkox/gitmir-codex-control
+          ref: 0c9db4635407cb30faab7a3f1887634db097324e
+          path: target
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out exact unchanged Adaptive preflight engine
+        uses: actions/checkout@v4
+        with:
+          repository: Dimkox/adaptive-grok-build-pro
+          ref: be752872f3e5a9d6fe179872d9c8bdaec4338238
+          path: framework
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18.0'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Audit the full baseline without source repairs
+        run: python audit-driver/tools/audit/full_project_audit.py --target target --framework framework --output "${{ runner.temp }}/gitmir-full-audit"
+      - name: Preserve audit evidence even when defects are reproduced
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitmir-audit-${{ matrix.os }}
+          path: ${{ runner.temp }}/gitmir-full-audit
+          if-no-files-found: error
+          retention-days: 14
