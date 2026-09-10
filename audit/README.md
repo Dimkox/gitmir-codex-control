@@ -1,40 +1,169 @@
-# GitMir whole-project audit — 2026-09-10
+# GitMir: аудит через Adaptive — 10 сентября 2026
 
-## Scope and implementation plan
+**Вердикт: приёмка не пройдена.** Завершён воспроизводимый прогон на Windows, macOS и Linux. Подтверждены шесть дефектов GitMir, отдельно — неработающий legacy CI и несовместимость проверяющего механизма Adaptive с Windows. Успешные 20 тестов Google Cloud не доказывают работоспособность всего приложения.
 
-Target: `Dimkox/gitmir-codex-control@0c9db4635407cb30faab7a3f1887634db097324e`.
-Verifier source: `Dimkox/adaptive-grok-build-pro@be752872f3e5a9d6fe179872d9c8bdaec4338238`.
+Это аудит и набор регрессионных проверок, **не исправление продукта, не релиз и не аттестация Trust CI**. Ветка не должна сливаться автоматически.
 
-This is a reproducible audit snapshot, not a release, repair, or attestation. The product source stays unchanged. `audit/adaptive_run.py` and `.github/workflows/adaptive-project-audit.yml` are audit tooling only.
+## 1. Что именно проверялось
 
-The approved scope is the whole GitMir project, not only its Google Cloud addition. The execution plan is: inventory and hash every tracked file; install locked development dependencies without lifecycle scripts; run typechecking, all auto-discovered Node tests, syntax checks, structured-file/skill-registry checks, production dependency audit and package dry-run; execute the pinned Adaptive verification engine and explicitly scan the whole tracked tree; test native skill installation in a disposable home; exercise real dashboard HTTP handlers against temporary projects; reproduce suspected input-validation and data-loss defects; run a Chromium dashboard smoke test on Linux; preserve results and list unexercised routes.
+| Объект | Зафиксированная версия |
+|---|---|
+| GitMir | `Dimkox/gitmir-codex-control@0c9db4635407cb30faab7a3f1887634db097324e` |
+| Проверяющий код Adaptive | `Dimkox/adaptive-grok-build-pro@be752872f3e5a9d6fe179872d9c8bdaec4338238` |
+| Код стенда окончательного прогона | `2152d81b136a83e17b6516c62800f4473928c68f` |
+| Blob `adaptive_run.py` | `5bad65c2533a549af04776ad18ef09ba5bfe86d4` |
+| PR аудита | [#5](https://github.com/Dimkox/gitmir-codex-control/pull/5) |
+| Основной прогон | [34522486519](https://github.com/Dimkox/gitmir-codex-control/actions/runs/34522486519) |
+| Первый диагностический прогон | [34521485096](https://github.com/Dimkox/gitmir-codex-control/actions/runs/34521485096) |
 
-## Trust boundary
+Все три job основного прогона завершились с `failure`, а выгрузка артефактов — с `success`. Результаты получены на hosted runners GitHub Actions, не на пользовательском ноутбуке или сервере claw. Node — 22.18.0; Python — 3.12.10 на Windows/macOS и 3.12.14 на Linux.
 
-Adaptive's `AGENTS.md`, `START_HERE.md` and `PROJECT_STATE.json` distinguish local quality evidence from deployed Trust CI. This audit imports its existing `verification.verify(..., record=False)` engine with base/frontend profiles. It does not fabricate an active route, claim independent review agents, activate a model/provider, generate receipts or human approvals, or satisfy an `adaptive-trust-ci/verified@...` gate.
+Проверялись полный список из **81 отслеживаемого файла**, зависимости, типы, синтаксис, регистрация навыков, существующие тесты, установщики, выбранные HTTP-сценарии, регрессии безопасности и сохранности данных. Дополнительно выполнена загрузка панели в Chromium. Это не утверждение о ручном построчном ревью каждого файла или полном прохождении каждой функции интерфейса.
 
-The Adaptive repository is read-only and receives no GitHub Actions files or dependency changes. GitMir already uses GitHub Actions; this separate GitMir audit uses ephemeral runners with `contents: read` and no persisted checkout credentials. No workflow or result grants merge authority. No merge is requested.
+## 2. Измеренные результаты
 
-## Execution
+Числа ниже — записи проверок стенда, а не количество уникальных unit-тестов и не процент готовности продукта. Запуск `node --test` с 20 вложенными тестами считается одной записью.
 
-Open this branch as a pull request to run the three native jobs. Each job audits the fixed baseline SHA, not the PR's application tree. All checks run even after individual failures; a failed or blocked check produces a nonzero exit, and artifacts are uploaded with `if: always()`.
+| ОС | PASS | FAIL | BLOCKED | SKIP | INFO |
+|---|---:|---:|---:|---:|---:|
+| Linux | 55 | 6 | 0 | 4 | 2 |
+| macOS | 54 | 5 | 0 | 6 | 2 |
+| Windows | 43 | 5 | 1 | 6 | 2 |
 
-A machine with both checkouts, Node 22.18.0, Python 3.12, Bash, PowerShell and the development dependencies can run:
+В каждой строке один `FAIL` относится к эвристике поиска секретов: она обнаружила синтетическую тестовую строку, а не подтверждённую утечку. Исходные результаты сканера сохранены без перекрашивания в зелёный. Windows `BLOCKED` — падение самого Adaptive, описанное ниже.
+
+**Успешно на всех трёх ОС:** `npm ci --ignore-scripts`, `npm run typecheck`, все 20 автоматически найденных Node-тестов, `npm audit --omit=dev --json`, `npm pack --dry-run --json --ignore-scripts`, синтаксические проверки восьми JS/MJS/TS-файлов, разбор PowerShell, JSON и регистра навыков. Чистая и повторная установка 12 навыков во временный HOME прошли; сохранность постороннего каталога проверялась отдельно и на Windows нарушена.
+
+HTTP-проверки подтвердили запуск панели, отдачу статики и 12 текстов навыков, чтение состояния, добавление/редактирование/удаление временного проекта и защиту от обычного cross-origin запроса. На Linux Chromium загрузил начальную панель без `pageerror` и ответов HTTP 4xx/5xx; снимок есть в артефакте.
+
+`npm audit` сообщил ноль известных уязвимостей в проверенных production-зависимостях. Это не сканирование vendored ELK, не проверка всей цепочки поставки и не доказательство отсутствия уязвимостей приложения. Упаковка dry-run не равнозначна успешной публикации пакета.
+
+## 3. Подтверждённые дефекты GitMir
+
+Приоритеты ниже — оценка этого ревью, не рассчитанный CVSS. P1 означает исправление до расширения функциональности и использования на важных данных; P2 — обязательное исправление в ближайшей стабилизации.
+
+### GM-01 · P1 · Linux: интерпретация имени папки как shell-кода
+
+**Место:** [server.ts, openInTerminal](https://github.com/Dimkox/gitmir-codex-control/blob/0c9db4635407cb30faab7a3f1887634db097324e/server.ts). **Проверка:** `linux-terminal-treats-project-path-literally` — FAIL на Linux.
+
+Путь помещается через `JSON.stringify` в строку `bash -lc`. Двойные кавычки не превращают shell-подстановки в обычный текст. Стенд создал существующий временный каталог с безвредной подстановкой в имени, вызвал настоящий `/api/open`, перехватил аргументы запуска терминала и выполнил полученную строку в изолированном каталоге. В результате появился контрольный файл, которого не должно было быть.
+
+Настоящий графический терминал и Codex не запускались. Доказан разбор части имени папки как команды; удалённая эксплуатация через браузер этим экспериментом не доказывается.
+
+**Исправление:** не встраивать путь в shell-строку. Передавать каталог отдельным аргументом либо через `cwd`; если shell действительно нужен, использовать постоянный текст команды и позиционные параметры. Критерий приёмки: пути с пробелами, апострофами, `$()`, обратными кавычками и Unicode остаются буквальными, контрольные файлы не появляются.
+
+### GM-02 · P1 · Неполная проверка Host
+
+**Место:** [server.ts, sameOrigin](https://github.com/Dimkox/gitmir-codex-control/blob/0c9db4635407cb30faab7a3f1887634db097324e/server.ts). **Проверка:** `http-reject-host-suffix` — FAIL на всех трёх ОС.
+
+Запрос к `/api/projects` с Host `localhost.attacker.invalid:<port>` и `Sec-Fetch-Site: same-origin` получил **200 вместо ожидаемого 403**. Регулярное выражение принимает начало `localhost`, не требуя окончания имени хоста.
+
+Это дефект границы доверия локального HTTP API. Не следует автоматически превращать его в утверждение о доказанном захвате машины: полная DNS-rebinding цепочка и браузерная эксплуатация не проверялись; отдельная проверка чужого Origin успешно возвращает 403.
+
+**Исправление:** строго разбирать authority и сравнивать точные разрешённые hostname и порт, отдельно проверяя Origin и Fetch Metadata. Критерий приёмки: домены с разрешённым префиксом отклоняются; документированный loopback-доступ продолжает работать.
+
+### GM-03 · P1 · Windows-установщик удаляет существующие пользовательские данные
+
+**Место:** [install.ps1](https://github.com/Dimkox/gitmir-codex-control/blob/0c9db4635407cb30faab7a3f1887634db097324e/install.ps1). **Проверка:** `installer-preserves-existing-directory` — FAIL на Windows.
+
+Если в `.agents/skills/<name>` уже находится обычный каталог, установщик рекурсивно удаляет его перед созданием junction. В тесте исчез пользовательский контрольный файл. Удаление воспроизведено только в специально созданном временном HOME; реальные файлы пользователя не затрагивались.
+
+**Исправление:** отличать собственные ссылки/junction от обычных каталогов и чужих ссылок. На коллизии сохранять данные и завершаться с понятным отказом либо использовать явно согласованный backup. Критерий приёмки: чужой каталог и его содержимое сохраняются; повторная установка собственной ссылки идемпотентна.
+
+### GM-04 · P1 · Создание задачи может затереть предыдущую
+
+**Место:** [server.ts, POST /api/task](https://github.com/Dimkox/gitmir-codex-control/blob/0c9db4635407cb30faab7a3f1887634db097324e/server.ts). **Проверка:** `http-task-creation-no-overwrite` — FAIL на всех трёх ОС.
+
+Два успешных запроса с одинаковым заголовком в пределах одной секунды возвращают одно и то же имя файла. Сервер использует секундную метку времени и обычную перезаписывающую запись. Первая задача не получает отдельного файла.
+
+**Исправление:** уникальный идентификатор и эксклюзивное создание с обработкой коллизии; одной замены секунд миллисекундами недостаточно для гарантии. Критерий приёмки: серия параллельных одноимённых задач сохраняет все записи и их содержимое, без одинаковых идентификаторов.
+
+### GM-05 · P2 · Unix-скрипты не готовы к документированному прямому запуску
+
+**Место:** `install.sh`, `start.command`, `install-shortcut.command`. **Проверка:** `unix-documented-entrypoints-executable` — FAIL на Linux и macOS.
+
+В checkout у этих файлов отсутствует executable bit. Поэтому инструкция с непосредственным запуском `./install.sh` не соответствует состоянию репозитория. Запуск через `bash install.sh` в отдельной проверке проходит — это другой способ вызова, не опровержение проблемы.
+
+**Исправление:** сохранить исполняемый режим файлов в Git либо явно изменить инструкции на вызов интерпретатора. Критерий приёмки: новая чистая копия запускается ровно командами из README, без ручного исправления прав.
+
+### GM-06 · P2 · Валидный JSON неверного типа приводит к 500
+
+**Место:** [server.ts, readBody и POST /api/update](https://github.com/Dimkox/gitmir-codex-control/blob/0c9db4635407cb30faab7a3f1887634db097324e/server.ts). **Проверка:** `http-reject-non-object-json` — FAIL на всех трёх ОС.
+
+Тело `null` синтаксически является JSON, но сервер пытается деструктурировать его как объект. Получен HTTP 500 с внутренним сообщением TypeError вместо клиентской ошибки. После запроса сервер продолжал обслуживать остальные проверки; падение всего процесса не зафиксировано.
+
+**Исправление:** единая проверка формы тела и типов полей до выполнения обработчика; отдельно ограничить размер тела. Критерий приёмки: `null`, массив, строка и неверные типы дают документированный 4xx без внутреннего исключения и без записи данных. Лимит размера — дополнительное требование, не отдельная воспроизведённая здесь DoS-атака.
+
+## 4. CI и сам проверяющий механизм
+
+### CI-01 · Legacy Webpack workflow не проверяет реальный путь поставки
+
+[Прогон 34522486453](https://github.com/Dimkox/gitmir-codex-control/actions/runs/34522486453), job `103023128112`: `npx webpack` предлагает интерактивно установить отсутствующий `webpack-cli` и завершается кодом 1. В матрице также есть Node 18/20 при требовании пакета `>=22.18.0`; лог Node 20 содержит `EBADENGINE`. Остальные matrix jobs отменены fail-fast, не считаются успешными.
+
+Приложение запускает TypeScript непосредственно в Node и не обязано получать искусственную Webpack-сборку. Рекомендация — заменить нерелевантный pipeline на реальные проверки типов, тестов, запуска и упаковки, согласовав Node matrix с `engines`. Workflow в рамках аудита не отключался и не изменялся.
+
+### AD-01 · Windows: Adaptive падает в управлении подпроцессом
+
+Во втором прогоне Windows снова получены `WinError 10038` в `selector.select` для pipe и затем `AttributeError: module 'os' has no attribute 'killpg'` при очистке. Трассировка проходит через `.grok-stack/adaptive_grok/architecture_diff.py`, `_run_capped`, `_stop_process`, вызванные проверкой архитектурной привязки.
+
+Это дефект переносимости проверяющего кода, не GitMir и не отсутствие установленного SDK. Стенд сохранил его как **BLOCKED**, после чего независимо выполнил доступные whole-tree scans и HTTP/installer-проверки. Код фабрики не подменялся и не исправлялся ради зелёного результата.
+
+Рекомендация: переносимый bounded subprocess runner с ограничением вывода, дедлайном и платформенным завершением дерева процессов; тесты на Windows и POSIX. До исправления полноценный запуск этого verifier на Windows не подтверждён.
+
+### AD-02 · Срабатывание эвристики на тестовой заглушке
+
+Whole-tree secret scan указал на [tests/google-cloud.test.mjs](https://github.com/Dimkox/gitmir-codex-control/blob/0c9db4635407cb30faab7a3f1887634db097324e/tests/google-cloud.test.mjs). В нём заданы синтетические значения вроде `SECRET-REFRESH`, чтобы убедиться, что они не попадают в отчёты. Срабатывание классифицировано как **false positive для этой тестовой строки**, не утечка действующего ключа.
+
+Нельзя ради этого исключать все тесты из проверки секретов. Нужны узкое обоснованное исключение конкретной фикстуры или улучшение классификации; исходный результат сканера оставлен в артефактах.
+
+## 5. Как использована фабрика и где заканчивается проверка
+
+Из отдельного неизменённого checkout импортируется настоящий `adaptive_grok.verification.verify`, запускаемый с `mode='pr'`, профилями `base/frontend` и `record=False`. Дополнительно `_secret_scan`, `_contracts`, `_sql_safety` получают весь список отслеживаемых файлов, а не только diff.
+
+Для проверки snapshot local `origin/HEAD` привязан к уже проверенному `origin/master`, указывающему на исходный SHA. Это локальные Git-метаданные, не новая ветка продукта или изменение удалённого репозитория. Поскольку baseline совпадает с master, проверки changes/specs видят пустой diff; они не выданы за full-tree анализ. Whole-tree сканирование выполнено отдельно.
+
+На Linux/macOS verifier завершает работу; архитектура и governance не настроены и возвращают SKIP. Ноль проверенных контрактов/SQL и пропущенные проверки не означают подтверждённую enterprise-готовность. На Windows действует ограничение AD-01.
+
+**Не выполнялись:** оркестрация независимых модельных агентов, реальный Codex-turn, запуск provider execution, подписание receipts, человеческие approvals, Trust CI на claw, `adaptive-trust-ci/verified@...`, production deploy или merge. Не создавались фиктивные `active-route.json`, аттестации или доказательства ревью.
+
+Фабрика используется как источник исполняемых quality checks. Это не равнозначно доказательству работоспособности всей «автономной фабрики» на произвольном проекте.
+
+## 6. Покрытие и непроверенные границы
+
+Из 29 HTTP-маршрутов с точным сравнением pathname стенд вызвал **18 на Linux и 17 на Windows/macOS**. В числе них — отказ отключённого preview и отрицательные сценарии; само наличие вызова не означает покрытие всех ветвей. Динамические маршруты и middleware не входят в знаменатель. Полный список фактически вызванных и пропущенных маршрутов сохранён в `summary.json`.
+
+На всех трёх ОС не выполнялись: `GET /api/preview-bridge.js`, `GET /api/share/export`, `GET /api/task-file`, `POST /api/pick`, `POST /api/preview-find`, `POST /api/reorder`, `POST /api/reveal`, `POST /api/team/connect`, `POST /api/team/send-task`, `POST /api/team/share-model`, `POST /api/team/share-view`. `/api/open` проверен только на Linux через перехват команды, без GUI терминала.
+
+Не проверены действующее облачное подключение, ADC, права GCP, реальное обновление Cloud SDK и запись Windows-реестра, live WebSocket relay, графические диалоги на пользовательских desktop-системах, все состояния графа модели и UI, а также включённый preview/proxy. Browser smoke проверял начальную загрузку панели, не каждый элемент интерфейса.
+
+Отдельные следующие security-review задачи: ограничения чтения тела/таймаутов preview, обработка симлинков и replay входящих relay-сообщений, доступ к локальным файлам через разрешённые маршруты. Они **не входят в шесть подтверждённых дефектов** и не объявлены доказанными уязвимостями без воспроизведения.
+
+## 7. Артефакты и сохранность исходников
+
+| Артефакт | GitHub ID | SHA-256 ZIP |
+|---|---:|---|
+| Windows | `10170244905` | `c40acadb5560d104e81003d1df174e15f68956a94c1eb0bdc1027ab81035eeb1` |
+| Linux | `10170244510` | `8f66174d2a217f7cd6387cc3d86c369210e18ffdba878af69e15dcc65bc82c6a` |
+| macOS | `10170232479` | `bbae0af08a9f4bdb5e7db3d78af329a681d33be357184b20299630a35ede7cc4` |
+
+Артефакты доступны в [основном прогоне](https://github.com/Dimkox/gitmir-codex-control/actions/runs/34522486519). В них находятся `summary.json`, инвентаризация SHA-256 81 файла, отчёты доступных проверок фабрики, журналы команд/сервера и Linux-снимок панели. SHA-256 скачанных ZIP проверены и совпадают с опубликованными GitHub digest. Workflow хранит артефакты 14 дней; это срок хранения GitHub, не обещание бессрочного архива.
+
+Перед и после каждого прогона хеши всех 81 исходного файла сравнивались **в пределах той же ОС**: изменений нет. Изолированные тесты использовали временные каталоги, тестовые данные и отдельный HOME. В продукт, его зависимости, обычные установщики и запуск изменения не внесены. В GitMir добавлены только три файла аудита: этот отчёт, `audit/adaptive_run.py` и `.github/workflows/adaptive-project-audit.yml`. Репозиторий Adaptive не изменён.
+
+## 8. Воспроизведение и план исправлений
+
+Стенд доступен в [adaptive_run.py](./adaptive_run.py), workflow — в [adaptive-project-audit.yml](../.github/workflows/adaptive-project-audit.yml). Workflow получает точные исходные SHA, использует `contents: read`, не сохраняет checkout credentials и выгружает evidence даже при ошибках.
+
+Для локального повторения нужны обе зафиксированные копии репозиториев, Node 22.18.0, Python 3.12, PowerShell и зависимости проекта. На Unix нужен Bash. Audit-only Python зависимости — PyYAML 6.0.2; Linux browser smoke требует Playwright 1.55.0 и установленный Chromium. Отсутствие инструмента отражается как BLOCKED, не PASS.
+
+При размещении каталогов `target`, `adaptive` и `audit-results` рядом с каталогом checkout аудита команда из корня последнего:
 
 ```text
-python audit/adaptive_run.py --target /path/to/gitmir --factory /path/to/adaptive --output /path/outside/source/audit-results
+python audit/adaptive_run.py --target ../target --factory ../adaptive --output ../audit-results
 ```
 
-The workflow additionally installs PyYAML 6.0.2 and, on Linux, Playwright 1.55.0 plus Chromium as audit-only tooling. On an offline host absent tooling is recorded as blocked, not passed. Browser smoke is Linux-only; API, native installer and syntax checks run on Windows, macOS and Linux.
+Это **snapshot-стенд** с закреплёнными SHA, не готовый динамический gate для всех будущих PR. После исправления продукта нужно отдельно выбрать проверяемый candidate SHA и повторить те же регрессии; зелёный результат на старом baseline невозможен, пока он содержит перечисленные дефекты.
 
-## Evidence
+Порядок работ: сначала GM-01/GM-02 — границы исполнения и HTTP-доверия; затем GM-03/GM-04 — сохранность данных; далее GM-05/GM-06 и CI-01. Параллельно исправить AD-01 в фабрике и добавить native Windows regression. После этого расширить функциональные проверки на пропущенные маршруты, relay, включённый preview и UI, а реальные Google Cloud/Codex проверки выполнять в согласованном изолированном окружении.
 
-Artifacts contain `summary.json`, full tracked-file hash inventory, factory PR-mode report, factory whole-tree scan report, command logs, server log and a Linux browser screenshot. Source hashes are compared before and after the run. Findings from the factory's heuristic secret scan are candidates requiring triage, not proof that a credential is real.
-
-Results are pending until the actual Actions jobs finish. The final reviewed results and known limitations belong in this directory or the PR discussion, not only in chat.
-
-## Deliberately not exercised
-
-Real Codex/model turns, cloud credentials and Google Cloud API calls, actual SDK upgrades or Windows registry writes, interactive terminal/folder-picker GUI behavior, live relay connections and Trust CI/production deployment are not exercised. API route coverage is reported explicitly. A browser page-load smoke test is not a full click-through audit of every UI state.
-
-Security and data-loss regression probes touch only disposable test data. Automatic desktop browser opening is suppressed by a subprocess preload; the server request handlers are unmodified. The Windows installer is invoked with a temporary PowerShell HOME, and the Unix installer with a temporary HOME. No production credentials are read.
+**Итог:** приложение проходит существующий узкий тестовый набор, но общий аудит выявляет блокирующие дефекты. Считать его полностью проверенным, безопасным или готовым к production по имеющимся зелёным тестам нельзя. Исправления продукта в этот PR не включены.
