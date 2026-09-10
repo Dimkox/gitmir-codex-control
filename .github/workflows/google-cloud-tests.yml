@@ -1,0 +1,38 @@
+name: Google Cloud integration tests
+on:
+  push:
+    paths:
+      - 'plugin/skills/google-cloud/**'
+      - 'skills/google-cloud.md'
+      - 'skills.json'
+      - 'package.json'
+      - 'tests/google-cloud.test.mjs'
+      - '.github/workflows/google-cloud-tests.yml'
+  pull_request:
+    paths:
+      - 'plugin/skills/google-cloud/**'
+      - 'skills/google-cloud.md'
+      - 'skills.json'
+      - 'package.json'
+      - 'tests/google-cloud.test.mjs'
+      - '.github/workflows/google-cloud-tests.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18.0'
+      - name: Check syntax and run dependency-free tests
+        run: |
+          node --check plugin/skills/google-cloud/scripts/gcloud.mjs
+          node --check plugin/skills/google-cloud/scripts/doctor.mjs
+          npm run test:gcloud

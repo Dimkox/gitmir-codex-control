@@ -14,7 +14,9 @@
   },
   "scripts": {
     "start": "node server.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "gcloud:doctor": "node plugin/skills/google-cloud/scripts/doctor.mjs",
+    "test:gcloud": "node --test tests/google-cloud.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

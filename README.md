@@ -81,8 +81,25 @@ macOS: `start.command` / `install-shortcut.command`.
 | `$context-distillation` | Messy input → `.gitmir/brief.json` |
 | `$legacy-maintenance` | Safe changes on coupled systems |
 | `$stack-port` | Port old stack → new without losing behaviour |
+| `$google-cloud` | SDK/context inspection, explicit GCP project binding, opt-in project-read verification and cloud task planning |
 
 Flat copies under `skills/` are for the dashboard UI (copy-paste). Canonical Codex layout is `plugin/skills/<name>/SKILL.md`.
+
+---
+
+## Google Cloud integration
+
+Google Cloud is an optional integration for projects managed by GitMir, **not a requirement to host GitMir in the cloud**. The existing dashboard skill catalog and the installable Codex plugin both expose `$google-cloud`.
+
+From the GitMir checkout, inspect the local SDK and CLI context:
+
+```bash
+npm run gcloud:doctor -- --directory "/path/to/your/project"
+```
+
+The helper reads `.gitmir/google-cloud.json` in that project when present. Add `--verify-project` only to explicitly read the bound project's metadata through Google Cloud API. No deployment, billing changes, global project switching, token export or SDK update is performed. Local metadata is **not** proof of working cloud credentials or deployment permissions.
+
+[Full setup, commands, limitations and verification](docs/google-cloud.md) · [Windows SDK / WinGet maintenance recipe](docs/windows/gcloud-winget-version-repair/README.md)
 
 ---
 
