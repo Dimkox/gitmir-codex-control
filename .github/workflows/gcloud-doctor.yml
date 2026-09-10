@@ -1,0 +1,52 @@
+name: gcloud-doctor
+
+on:
+  push:
+    branches: [master, 'feat/gcloud-doctor-cross-platform']
+    paths:
+      - 'plugin/skills/gcloud-doctor/**'
+      - 'skills/gcloud-doctor.md'
+      - 'skills.json'
+      - 'package.json'
+      - 'tests/gcloud-doctor.test.mjs'
+      - '.github/workflows/gcloud-doctor.yml'
+  pull_request:
+    paths:
+      - 'plugin/skills/gcloud-doctor/**'
+      - 'skills/gcloud-doctor.md'
+      - 'skills.json'
+      - 'package.json'
+      - 'tests/gcloud-doctor.test.mjs'
+      - '.github/workflows/gcloud-doctor.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gcloud-doctor-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['22.18.0', '24.x']
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Syntax and SDK-free help
+        run: |
+          node --check plugin/skills/gcloud-doctor/scripts/doctor.mjs
+          node plugin/skills/gcloud-doctor/scripts/doctor.mjs --help
+      - name: Fixture-based diagnostic and integration tests
+        run: npm run test:gcloud-doctor
