@@ -100,7 +100,7 @@ def main() -> int:
     def structured() -> dict:
         checked = []
         for rel in files:
-            if rel.endswith('.json'):
+            if rel.endswith('.json') and rel != 'tsconfig.json':
                 json.loads((root / rel).read_text(encoding='utf-8'))
                 checked.append(rel)
         registry = json.loads((root / 'skills.json').read_text(encoding='utf-8'))
@@ -108,38 +108,57 @@ def main() -> int:
         assert not missing, 'Missing registered skill files: ' + repr(missing)
         names = [s['name'] for s in registry]
         assert len(names) == len(set(names)), 'Duplicate registered skill names'
-        return {'json_files': checked, 'registered_skills': len(names)}
+        return {'json_files': checked, 'registered_skills': len(names),
+                'jsonc': 'tsconfig.json is checked by the real TypeScript compiler in typecheck'}
     probe('json-and-skill-registry', structured)
 
     for rel in files:
         if rel.endswith(('.sh', '.command')):
-            command('bash-syntax-' + Path(rel).name, ['bash', '-n', str(root / rel)])
+            if os.name == 'nt':
+                record('bash-syntax-' + Path(rel).name, 'skip', 'POSIX scripts are syntax-checked on both Unix runners, not Windows WSL')
+            else:
+                command('bash-syntax-' + Path(rel).name, ['bash', '-n', str(root / rel)])
     ps_parser = out / 'parse-powershell.ps1'
     ps_parser.write_text("param([string]$Root)\n$bad=0; Get-ChildItem -LiteralPath $Root -Filter *.ps1 -Recurse | Where-Object { $_.FullName -notmatch '[\\\\/]node_modules[\\\\/]' } | ForEach-Object { $t=$null; $e=$null; [System.Management.Automation.Language.Parser]::ParseFile($_.FullName,[ref]$t,[ref]$e) | Out-Null; foreach($x in $e){ Write-Output ($_.FullName+': '+$x.Message); $bad++ } }; if($bad){exit 1}\n", encoding='utf-8')
     command('powershell-syntax', ['pwsh', '-NoProfile', '-File', str(ps_parser), str(root)])
 
+    # Set only checkout metadata to the already verified repository default branch.
+    # A full snapshot is not a code-change PR; whole-tree scanners run separately.
+    def select_factory_base() -> dict:
+        baseline = git('rev-parse', 'HEAD')
+        remote_master = git('rev-parse', 'refs/remotes/origin/master')
+        assert remote_master == baseline, 'Remote master changed; refuse to infer a new baseline'
+        git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/master')
+        return {'default_branch': 'master', 'sha': baseline}
+    probe('factory-default-branch-binding', select_factory_base)
+
     # The factory source remains a separate, unchanged checkout. No route is forged.
     sys.path.insert(0, str(factory / '.grok-stack'))
     try:
-        from adaptive_grok.verification import verify, _secret_scan, _contracts, _sql_safety
+        from adaptive_grok.verification import verify
         old = os.getcwd()
         try:
             os.chdir(root)
             report = verify(root, mode='pr', profiles=['base', 'frontend'], record=False)
-            scans = [fn(root, files).to_dict() for fn in (_secret_scan, _contracts, _sql_safety)]
         finally:
             os.chdir(old)
         (out / 'factory-verification.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
-        (out / 'factory-entire-tree.json').write_text(json.dumps(scans, indent=2), encoding='utf-8')
         for item in report['checks']:
             record('adaptive-' + item['name'], item['status'],
                    {'summary': item['summary'], 'details': item.get('details', []),
                     'stdout': item.get('stdout', '')[-3500:], 'stderr': item.get('stderr', '')[-3500:]})
+    except Exception:
+        record('adaptive-engine', 'blocked', traceback.format_exc()[-5000:])
+    # A platform failure in orchestration must not suppress independent tree scans.
+    try:
+        from adaptive_grok.verification import _secret_scan, _contracts, _sql_safety
+        scans = [fn(root, files).to_dict() for fn in (_secret_scan, _contracts, _sql_safety)]
+        (out / 'factory-entire-tree.json').write_text(json.dumps(scans, indent=2), encoding='utf-8')
         for item in scans:
             record('entire-tree-' + item['name'], item['status'],
                    {'summary': item['summary'], 'details': item.get('details', [])})
     except Exception:
-        record('adaptive-engine', 'blocked', traceback.format_exc()[-5000:])
+        record('adaptive-tree-scans', 'blocked', traceback.format_exc()[-3500:])
 
     with tempfile.TemporaryDirectory(prefix='gitmir audit ') as tmp:
         work = Path(tmp)
@@ -147,6 +166,14 @@ def main() -> int:
         home.mkdir()
         env = os.environ.copy()
         env.update(HOME=str(home), USERPROFILE=str(home), CI='true')
+        def executable_installers() -> None:
+            missing = [name for name in ('install.sh', 'start.command', 'install-shortcut.command')
+                       if not os.access(root / name, os.X_OK)]
+            assert not missing, 'Documented direct execution is denied by checkout modes: ' + ', '.join(missing)
+        if os.name != 'nt':
+            probe('unix-documented-entrypoints-executable', executable_installers)
+        else:
+            record('unix-documented-entrypoints-executable', 'skip', 'Executable bits are checked on native Unix filesystems')
         skills = sorted(p.name for p in (root / 'plugin' / 'skills').iterdir() if p.is_dir())
         def install() -> None:
             if os.name == 'nt':
@@ -195,8 +222,16 @@ def main() -> int:
             port = sock.getsockname()[1]
         env['GITMIR_PORT'] = str(port)
         env['GITMIR_PREVIEW'] = '0'
+        if sys.platform == 'linux':
+            bin_dir = work / 'bin'
+            bin_dir.mkdir()
+            terminal = bin_dir / 'x-terminal-emulator'
+            terminal.write_text('#!/bin/sh\nprintf \'%s\' "$4" > "$GITMIR_AUDIT_CAPTURE"\n', encoding='utf-8')
+            terminal.chmod(0o700)
+            env['PATH'] = str(bin_dir) + os.pathsep + env['PATH']
+            env['GITMIR_AUDIT_CAPTURE'] = str(work / 'terminal-command.txt')
         log = (out / 'server.log').open('w', encoding='utf-8')
-        server = subprocess.Popen(['node', '--import', str(preload), 'server.ts'], cwd=runtime,
+        server = subprocess.Popen(['node', '--import', preload.as_uri(), 'server.ts'], cwd=runtime,
                                   env=env, stdout=log, stderr=subprocess.STDOUT)
         observed_routes = set()
         def request(route: str, method: str = 'GET', payload=None, headers: dict | None = None) -> tuple[int, bytes]:
@@ -266,6 +301,30 @@ def main() -> int:
                 finally:
                     c.close()
             probe('http-reject-non-object-json', null_body)
+            def linux_literal_path() -> None:
+                candidate = work / 'literal$(printf AUDIT>audit-marker.txt)'
+                candidate.mkdir()
+                expect('/api/open', method='POST', payload={'path': str(candidate)})
+                captured = work / 'terminal-command.txt'
+                for _ in range(50):
+                    if captured.is_file():
+                        break
+                    time.sleep(.02)
+                assert captured.is_file(), 'Terminal subprocess did not receive arguments'
+                inner = captured.read_text(encoding='utf-8')
+                # The captured command is evaluated with only an inert marker payload
+                # in a disposable directory, without an interactive terminal or Codex.
+                proc = subprocess.run(['bash', '--noprofile', '--norc', '-c', inner],
+                                      cwd=work, env=env, stdin=subprocess.DEVNULL,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+                assert not (work / 'audit-marker.txt').exists(), 'Project folder name executed shell substitution in the Linux terminal command'
+            if sys.platform == 'linux':
+                probe('linux-terminal-treats-project-path-literally', linux_literal_path)
+            else:
+                record('linux-terminal-treats-project-path-literally', 'skip', 'Linux-specific terminal command; no desktop GUI is opened')
+            probe('http-ping', lambda: expect('/api/ping'))
+            probe('http-preview-disabled', lambda: expect('/api/preview?url=https://example.invalid', 404))
+            probe('http-team-disconnect-idempotent', lambda: expect('/api/team/disconnect', method='POST', payload={}))
             probe('http-project-remove', lambda: expect('/api/remove', method='POST', payload={'path': str(project)}))
             if sys.platform == 'linux':
                 def browser_smoke() -> dict:
@@ -301,6 +360,8 @@ def main() -> int:
                 server.kill()
                 server.wait(timeout=5)
             log.close()
+            if any(r['name'] == 'http-runtime' and r['status'] == 'blocked' for r in results):
+                print('SERVER_STARTUP_LOG ' + (out / 'server.log').read_text(encoding='utf-8', errors='replace')[-4500:], flush=True)
 
     after = {f: hashlib.sha256((root / f).read_bytes()).hexdigest() for f in before if (root / f).is_file()}
     record('baseline-source-unchanged', 'pass' if before == after else 'fail',
@@ -311,6 +372,7 @@ def main() -> int:
     summary = {'metadata': metadata, 'checks': results,
                'counts': {s: sum(r['status'] == s for r in results) for s in ['pass', 'fail', 'blocked', 'skip', 'info']}}
     (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=True, indent=2), encoding='utf-8')
+    print('AUDIT_NONPASS ' + json.dumps([r for r in results if r['status'] in {'fail', 'blocked', 'skip'}]), flush=True)
     print('AUDIT_COUNTS ' + json.dumps(summary['counts']), flush=True)
     return 1 if summary['counts']['fail'] or summary['counts']['blocked'] else 0
 
